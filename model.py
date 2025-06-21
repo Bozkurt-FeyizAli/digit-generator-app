@@ -9,7 +9,7 @@ class CVAE(nn.Module):
         self.num_classes = num_classes
         self.latent_dim = latent_dim
 
-        # Encoder
+        # --- Encoder ---
         self.encoder_conv = nn.Sequential(
             nn.Conv2d(img_shape[0], 16, kernel_size=3, stride=2, padding=1),
             nn.ReLU(),
@@ -19,7 +19,7 @@ class CVAE(nn.Module):
         self.fc_mu = nn.Linear(32 * 7 * 7, latent_dim)
         self.fc_log_var = nn.Linear(32 * 7 * 7, latent_dim)
 
-        # Decoder
+        # --- Decoder ---
         self.decoder_fc = nn.Linear(latent_dim + num_classes, 32 * 7 * 7)
         self.decoder_deconv = nn.Sequential(
             nn.ConvTranspose2d(32, 16, kernel_size=3, stride=2, padding=1, output_padding=1),
@@ -33,32 +33,43 @@ class CVAE(nn.Module):
         eps = torch.randn_like(std)
         return mu + eps * std
 
-    def decode(self, z, y):
-        # One-hot encode the label y
-        y_one_hot = F.one_hot(torch.tensor(y), self.num_classes).float().view(1, -1)
-        z_cond = torch.cat([z, y_one_hot], dim=1)
-        
-        decoder_hidden = self.decoder_fc(z_cond)
-        decoder_hidden_reshaped = decoder_hidden.view(-1, 32, 7, 7)
-        recon_x = self.decoder_deconv(decoder_hidden_reshaped)
-        return recon_x
-
     def forward(self, x, y):
-        # Encoder
-        conv_out = self.encoder_conv(x)
-        flat_out = conv_out.view(conv_out.size(0), -1)
+        # --- Encoding Step ---
+        encoder_out = self.encoder_conv(x)
+        flat_out = encoder_out.view(encoder_out.size(0), -1)
         mu = self.fc_mu(flat_out)
         log_var = self.fc_log_var(flat_out)
-        
-        # Reparameterization
+
+        # --- Reparameterization Trick ---
         z = self.reparameterize(mu, log_var)
-        
-        # Decoder
+
+        # --- Decoding Step ---
         y_one_hot = F.one_hot(y, self.num_classes).float()
         z_cond = torch.cat([z, y_one_hot], dim=1)
         
         decoder_hidden = self.decoder_fc(z_cond)
         decoder_hidden_reshaped = decoder_hidden.view(-1, 32, 7, 7)
         recon_x = self.decoder_deconv(decoder_hidden_reshaped)
-        
+
         return recon_x, mu, log_var
+        
+    def decode(self, z, y):
+        """
+        A separate decode function for generation.
+        Takes a latent vector 'z' and a class label 'y' to generate an image.
+        """
+        y_tensor = torch.tensor([y]).to(z.device) # Ensure y is a tensor on the correct device
+        y_one_hot = F.one_hot(y_tensor, self.num_classes).float()
+        
+        # Make sure z and y_one_hot have the same batch size (1)
+        if z.dim() == 1:
+            z = z.unsqueeze(0)
+        if y_one_hot.dim() == 1:
+            y_one_hot = y_one_hot.unsqueeze(0)
+            
+        z_cond = torch.cat([z, y_one_hot], dim=1)
+        
+        decoder_hidden = self.decoder_fc(z_cond)
+        decoder_hidden_reshaped = decoder_hidden.view(-1, 32, 7, 7)
+        generated_x = self.decoder_deconv(decoder_hidden_reshaped)
+        return generated_x
